@@ -17,8 +17,8 @@ opt = {
    ntrain = math.huge,     -- #  of examples per epoch. math.huge for full dataset
    display = 1,            -- display samples while training. 0 = false
    display_id = 10,        -- display window id.
-   gpu = 0,                -- gpu = 0 is CPU mode. gpu=X is GPU mode on GPU X
-   name = 'improved',
+   gpu = 1,                -- gpu = 0 is CPU mode. gpu=X is GPU mode on GPU X
+   name = 'improved-mse',
    noise = 'normal',       -- uniform / normal
 }
 
@@ -105,7 +105,7 @@ netD:apply(weights_init)
 
 local criterion = nn.BCECriterion()
 ----- ImprovedGAN
-local improvedCriterion = nn.AbsCriterion()
+local improvedCriterion = nn.MSECriterion()
 ---------------------------------------------------------------------------
 optimStateG = {
    learningRate = opt.lr,
@@ -124,12 +124,14 @@ local epoch_tm = torch.Timer()
 local tm = torch.Timer()
 local data_tm = torch.Timer()
 -- ImprovedGAN: @ashkan
-local output_unl, output_gen
+local output_unl = torch.FloatTensor(opt.batchSize,ndf*8,4,4)
+local output_gen = output_unl:clone()
 ----------------------------------------------------------------------------
 if opt.gpu > 0 then
    require 'cunn'
    cutorch.setDevice(opt.gpu)
    input = input:cuda();  noise = noise:cuda();  label = label:cuda()
+	output_unl = output_unl:cuda(); output_gen = output_gen:cuda(); improvedCriterion = improvedCriterion:cuda()
 
    if pcall(require, 'cudnn') then
       require 'cudnn'
@@ -168,7 +170,7 @@ local fDx = function(x)
    local df_do = criterion:backward(output, label)
    netD:backward(input, df_do)
    --------------- ImprovedGAN
-	output_unl = netD.modules[11].output:clone():mean(1) -- Take intermediate code of netD
+	output_unl = netD.modules[11].output:clone() -- Take intermediate code of netD
    --------------------------
 	-- train with fake
    if opt.noise == 'uniform' then -- regenerate random noise
@@ -185,7 +187,7 @@ local fDx = function(x)
    local df_do = criterion:backward(output, label)
    netD:backward(input, df_do)
    --------------- ImprovedGAN
-	output_gen = netD.modules[11].output:clone():mean(1) -- Take intermediate code of netD
+	output_gen = netD.modules[11].output:clone() -- Take intermediate code of netD
    --------------------------
 	
    errD = errD_real + errD_fake
@@ -205,11 +207,18 @@ local fGx = function(x)
 
    --local output = netD.output -- netD:forward(input) was already executed in fDx, so save computation
    --errG = criterion:forward(output, label)
-   errG = improvedCriterion:forward(output_gen,output_unl)
+   local meanL = nn.Mean(1):cuda()
+ 	local m_unl = meanL:forward(output_unl):clone() -- m1
+	local m_gen = meanL:forward(output_gen) -- m2
+    -- errG = improvedCriterion:forward(output_gen,output_unl)
+   errG = improvedCriterion:forward(m_gen,m_unl)
    --local df_do = criterion:backward(output, label)
-   local df_do = improvedCriterion:backward(output_gen, output_unl)
-   local df_dg = netD:updateGradInput(input, df_do)
-
+   local df_do = improvedCriterion:backward(m_gen, m_unl)
+   df_do = meanL:backward(output_gen,df_do)
+   for i=11,2,-1 do
+	df_do = netD.modules[i]:backward(netD.modules[i-1].output, df_do)
+   end 
+   local df_dg = netD.modules[1]:backward(input, df_do)
    netG:backward(noise, df_dg)
    return errG, gradParametersG
 end
