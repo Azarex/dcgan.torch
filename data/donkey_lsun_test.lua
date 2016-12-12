@@ -31,6 +31,7 @@ if not os.execute('cd ' .. opt.data) then
     error(("could not chdir to '%s'"):format(opt.data))
 end
 
+testPath = paths.concat(opt.data, 'test')
 trainPath = paths.concat(opt.data, 'train')
 valPath   = paths.concat(opt.data, 'val')
 
@@ -80,22 +81,27 @@ local trainHook = function(path)
 end
 
 --------------------------------------
--- trainLoader
-print('initializing train loader')
-trainLoader = {}
-trainLoader.classes = classes
-trainLoader.indices = {}
-trainLoader.db = {}
-trainLoader.db_reader = {}
+-- testLoader
+print('initializing test loader')
+testLoader = {}
+testLoader.classes = classes
+testLoader.indices = {}
+testLoader.db = {}
+testLoader.db_reader = {}
+testLoader.cursors = {}
+
+trainLoader = testLoader -- For interface compatibility with other donkeys
+
 for i=1,#classes do
    print('initializing: ', classes[i])
-   trainLoader.indices[i] = torch.load(paths.concat(trainPath, classes[i]
-                                                        .. '_train_lmdb_hashes_chartensor.t7'))
-   trainLoader.db[i] = lmdb.env{Path=paths.concat(trainPath, classes[i] .. '_train_lmdb'),
+   testLoader.indices[i] = torch.load(paths.concat(testPath, classes[i]
+                                                        .. '_train_lmdb_hashes_chartensor_test.t7'))
+   testLoader.db[i] = lmdb.env{Path=paths.concat(trainPath, classes[i] .. '_train_lmdb'),
                                 RDONLY=true, NOLOCK=true, NOTLS=true, NOSYNC=true, NOMETASYNC=true,
                                MaxReaders=20, MaxDBs=20}
-   trainLoader.db[i]:open()
-   trainLoader.db_reader[i] = trainLoader.db[i]:txn(true)
+   testLoader.db[i]:open()
+   testLoader.db_reader[i] = testLoader.db[i]:txn(true)
+   testLoader.cursors[i] = 1
 end
 
 local function getData(self, key, binary)
@@ -109,23 +115,45 @@ local function getData(self, key, binary)
     end
 end
 
-function trainLoader:sample(quantity)
+function testLoader:sample(quantity)
+  -- if self:remainingSize() < quantity then self:resetCursors(); return nil end 
    local data = torch.Tensor(quantity, sampleSize[1], sampleSize[2], sampleSize[2])
    local label = torch.Tensor(quantity)
    for i=1, quantity do
       local class = torch.random(1, #self.classes)
-      local index = torch.random(1, self.indices[class]:size(1))
-      local hash = ffi.string(trainLoader.indices[class][index]:data(), trainLoader.indices[class]:size(2))
+      if self.cursors[class] > self.indices[class]:size(1) then self.cursors[class] = 1;  end 
+      local index = self.cursors[class]
+      local hash = ffi.string(testLoader.indices[class][index]:data(), testLoader.indices[class]:size(2))
       local imgblob = getData(self.db_reader[class], hash, true)
       local out = trainHook(imgblob)
       data[i]:copy(out)
       label[i] = class
+      self.cursors[class] = self.cursors[class] + 1
    end
    collectgarbage(); collectgarbage()
    return data, label
 end
 
-function trainLoader:size()
+function testLoader:remainingSize()
+    local rem = 0
+    for i=1,#self.classes do
+        rem = rem + self.indices[i]:size(1) - self.cursors[i] 
+    end
+   return rem
+end
+
+function testLoader:remainingBatches(quantity)
+    return math.floor(self:remainingSize() / quantity)
+end
+
+function testLoader:resetCursors()
+    for i=1,#self.indices do
+        self.cursors[i] = 1
+    end
+end
+
+
+function testLoader:size()
     if self._size then return self._size end
     local size = 0
     for i=1,#self.indices do
@@ -134,3 +162,4 @@ function trainLoader:size()
     self._size = size
    return size
 end
+

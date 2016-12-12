@@ -19,6 +19,7 @@ for i=1,#list do
    reader = db:txn(true)
    cursor = reader:cursor()
    hsh = tds.hash()
+   db_size = db:stat().entries
 
    count = 1
    local cont = true
@@ -27,17 +28,24 @@ for i=1,#list do
       hsh[count] = key
       print('Reading: ', count, '   Key:', key)
       count = count + 1
-      if not cursor:next() then
+      if not cursor:next() or count == db_size/2 then
           cont = false
       end
    end
 
-   hsh2 = torch.CharTensor(#hsh, #hsh[1])
-   for i=1,#hsh do ffi.copy(hsh2[i]:data(), hsh[i], #hsh[1]) end
+   local train_sz = math.floor(#hsh/2)
+   local test_sz = #hsh - train_sz
+   hsh_train = torch.CharTensor(train_sz, #hsh[1])
+   hsh_test = torch.CharTensor(test_sz, #hsh[1])
+   for i=1,train_sz do ffi.copy(hsh_train[i]:data(), hsh[i], #hsh[1]) end
+   for i=1,test_sz  do ffi.copy(hsh_test[i]:data(), hsh[i+train_sz], #hsh[1]) end
 
-   local indexfile = paths.concat(root, name .. '_hashes_chartensor.t7')
-   torch.save(indexfile, hsh2)
-   print('wrote index file at: ', indexfile .. ' with ' .. count .. ' keys')
+   local indexfile_train = paths.concat(root, name .. '_hashes_chartensor.t7')
+   local indexfile_test = paths.concat(root, name .. '_hashes_chartensor_test.t7')
+   torch.save(indexfile_train, hsh_train)
+   torch.save(indexfile_test, hsh_test)
+   print('wrote index file at: ', indexfile_train .. ' with ' .. train_sz .. ' keys')
+   print('wrote index file at: ', indexfile_test .. ' with ' .. test_sz .. ' keys')
 end
 
 print("you're all set")
