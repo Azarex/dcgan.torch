@@ -20,6 +20,8 @@ opt = {
    gpu = 1,                -- gpu = 0 is CPU mode. gpu=X is GPU mode on GPU X
    name = 'improved-mse',
    noise = 'normal',       -- uniform / normal
+   criterion = 'mse',
+   featMatchLayer = 8,
 }
 
 -- one-line argument parser. parses enviroment variables to override the defaults
@@ -105,7 +107,18 @@ netD:apply(weights_init)
 
 local criterion = nn.BCECriterion()
 ----- ImprovedGAN
-local improvedCriterion = nn.MSECriterion()
+local improvedCriterion
+if opt.criterion == 'mse' then 
+	improvedCriterion = nn.MSECriterion()
+	print('Improved Criterion: MSECriterion')
+elseif opt.criterion == 'abs' then 
+	improvedCriterion = nn.AbsCriterion()
+	print('Improved Criterion: AbsCriterion ')
+elseif opt.criterion == 'sabs' then 
+	improvedCriterion = nn.SmoothL1Criterion()
+	print('Improved Criterion: SmoothL1Criterion ')
+
+end
 ---------------------------------------------------------------------------
 optimStateG = {
    learningRate = opt.lr,
@@ -170,7 +183,7 @@ local fDx = function(x)
    local df_do = criterion:backward(output, label)
    netD:backward(input, df_do)
    --------------- ImprovedGAN
-	output_unl = netD.modules[11].output:clone() -- Take intermediate code of netD
+	output_unl = netD.modules[opt.featMatchLayer].output:clone() -- Take intermediate code of netD
    --------------------------
 	-- train with fake
    if opt.noise == 'uniform' then -- regenerate random noise
@@ -187,7 +200,7 @@ local fDx = function(x)
    local df_do = criterion:backward(output, label)
    netD:backward(input, df_do)
    --------------- ImprovedGAN
-	output_gen = netD.modules[11].output:clone() -- Take intermediate code of netD
+	output_gen = netD.modules[opt.featMatchLayer].output:clone() -- Take intermediate code of netD
    --------------------------
 	
    errD = errD_real + errD_fake
@@ -207,15 +220,17 @@ local fGx = function(x)
 
    --local output = netD.output -- netD:forward(input) was already executed in fDx, so save computation
    --errG = criterion:forward(output, label)
+
+   -- Average over mini batch
    local meanL = nn.Mean(1):cuda()
- 	local m_unl = meanL:forward(output_unl):clone() -- m1
-	local m_gen = meanL:forward(output_gen) -- m2
-    -- errG = improvedCriterion:forward(output_gen,output_unl)
+ 	local m_unl = meanL:forward(output_unl):clone() 
+	local m_gen = meanL:forward(output_gen) 
+   assert(m_unl:isSameSizeAs(m_gen), 'Sizes don\'t match')
    errG = improvedCriterion:forward(m_gen,m_unl)
-   --local df_do = criterion:backward(output, label)
+   -- back propagate G
    local df_do = improvedCriterion:backward(m_gen, m_unl)
    df_do = meanL:backward(output_gen,df_do)
-   for i=11,2,-1 do
+   for i=opt.featMatchLayer,2,-1 do
 	df_do = netD.modules[i]:backward(netD.modules[i-1].output, df_do)
    end 
    local df_dg = netD.modules[1]:backward(input, df_do)

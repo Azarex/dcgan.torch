@@ -18,7 +18,7 @@ opt = {
    display = 1,            -- display samples while training. 0 = false
    display_id = 10,        -- display window id.
    gpu = 1,                -- gpu = 0 is CPU mode. gpu=X is GPU mode on GPU X
-   name = 'experiment1',
+   name = 'main-lsun',
    noise = 'normal',       -- uniform / normal
 }
 

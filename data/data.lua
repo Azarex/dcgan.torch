@@ -21,6 +21,9 @@ function data.new(n, dataset_name, opt_)
    elseif dataset_name == 'lsun' then
        donkey_file = 'donkey_lsun.lua'
        if n > 6 then n = 6 end -- lmdb complains beyond 6 donkeys. wtf.
+   elseif dataset_name == 'lsun-test' then
+       donkey_file = 'donkey_lsun_test.lua'
+       if n > 6 then n = 6 end -- lmdb complains beyond 6 donkeys. wtf.
    else
       error('Unknown dataset: ' .. dataset_name)
    end
